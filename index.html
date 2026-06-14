@@ -1098,6 +1098,33 @@ html, body {
 }
 
 </style>
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"
+  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDqPTmjm_Mxw1aV8HmWe2aoN2WfuLDIGAM",
+    authDomain: "possession-25443.firebaseapp.com",
+    projectId: "possession-25443",
+    storageBucket: "possession-25443.firebasestorage.app",
+    messagingSenderId: "224868537777",
+    appId: "1:224868537777:web:98a291ebe199131b8c9990",
+    measurementId: "G-RQ9BGLT29J"
+  }
+
+  const app = initializeApp(firebaseConfig)
+  const db  = getFirestore(app)
+  const REF = doc(db, "possession", "characters")
+
+  // expose to global scope
+  window._db    = db
+  window._ref   = REF
+  window._getDoc  = getDoc
+  window._setDoc  = setDoc
+  window._firebaseReady = true
+  document.dispatchEvent(new Event("firebase-ready"))
+</script>
 </head>
 <body>
 
@@ -1475,24 +1502,30 @@ const CHARACTERS = [
 ]
 
 
-/* ─── Auto Save / Load (localStorage) ─── */
+/* ─── Auto Save / Load (Firestore) ─── */
 function saveCharacters() {
-  try {
-    localStorage.setItem("possession_characters", JSON.stringify(CHARACTERS))
-  } catch(e) { console.error("save failed", e) }
+  if (!window._firebaseReady) return
+  window._setDoc(window._ref, { data: JSON.stringify(CHARACTERS) })
+    .catch(e => console.error("save failed", e))
 }
 
-;(function loadCharacters() {
+function _applyCloudData(json) {
   try {
-    const saved = localStorage.getItem("possession_characters")
-    if (!saved) return
-    const data = JSON.parse(saved)
+    const data = JSON.parse(json)
     if (!Array.isArray(data)) return
     data.forEach((item, i) => {
       if (CHARACTERS[i] && item) Object.assign(CHARACTERS[i], item)
     })
   } catch(e) { console.error("load failed", e) }
-})()
+}
+
+// Load from Firestore when Firebase is ready
+document.addEventListener("firebase-ready", () => {
+  window._getDoc(window._ref).then(snap => {
+    if (snap.exists()) _applyCloudData(snap.data().data)
+    buildGallery()
+  }).catch(e => { console.error("load failed", e); buildGallery() })
+})
 /* ═══════════════════════════════════════════════════
    SYSTEM — ไม่จำเป็นต้องแก้
 ═══════════════════════════════════════════════════ */
@@ -1629,7 +1662,9 @@ function toast(msg, dur = 2000) {
 
 // ── Build Gallery ──
 const gallery = document.getElementById("gallery")
-IMAGES.forEach((src, i) => {
+function buildGallery() {
+  gallery.innerHTML = ""
+  IMAGES.forEach((src, i) => {
   const char = CHARACTERS[i] || { name: src.split("/").pop().split(".")[0] }
   const atk = char.stats?.find(s => s.name === "ATK")?.val ?? "—"
   const hp  = char.stats?.find(s => s.name === "HP")?.val  ?? "—"
@@ -1707,7 +1742,11 @@ IMAGES.forEach((src, i) => {
   gallery.appendChild(card)
 })
 
-// ── Card Interactions ──
+bindCards()
+applyFilter()
+} // end buildGallery
+
+function bindCards() {
 const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0
 document.querySelectorAll(".card").forEach(card => {
   const inner = card.querySelector(".card-inner")
@@ -1739,6 +1778,7 @@ document.querySelectorAll(".card").forEach(card => {
     }, { passive: true })
   }
 })
+} // end bindCards
 
 // ── Search & Filter ──
 let activeFilter = "all"
