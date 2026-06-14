@@ -1101,7 +1101,7 @@ html, body {
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"
-  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
 
   const firebaseConfig = {
     apiKey: "AIzaSyDqPTmjm_Mxw1aV8HmWe2aoN2WfuLDIGAM",
@@ -1117,11 +1117,16 @@ html, body {
   const db  = getFirestore(app)
   const REF = doc(db, "possession", "characters")
 
+  // rank ref
+  const RANK_REF = doc(db, "possession", "rank")
+
   // expose to global scope
-  window._db    = db
-  window._ref   = REF
-  window._getDoc  = getDoc
-  window._setDoc  = setDoc
+  window._db         = db
+  window._ref        = REF
+  window._rankRef    = RANK_REF
+  window._getDoc     = getDoc
+  window._setDoc     = setDoc
+  window._onSnapshot = onSnapshot
   window._firebaseReady = true
   document.dispatchEvent(new Event("firebase-ready"))
 </script>
@@ -1157,7 +1162,7 @@ html, body {
     <img class="manual-logo" id="logo" src="IG/0.png" alt="Possession">
     <div class="manual-title">POSSESSION</div>
     <div class="manual-badge">📖 คู่มือ</div>
-    <a href="rank.html" class="manual-badge" style="text-decoration:none;" onclick="event.stopPropagation()">🏆 Rank</a>
+    <button class="manual-badge" id="rank-open-btn" onclick="event.stopPropagation();openRankBoard()" style="cursor:pointer;border:none;font:inherit">🏆 Rank</button>
     <div class="manual-toggle">▼</div>
   </div>
 
@@ -2144,5 +2149,349 @@ musicBtn.addEventListener("click", () => {
   }
 })
 </script>
+
+<!-- ══ RANK BOARD POPUP ══ -->
+<style>
+/* ── Rank Modal ── */
+#rank-modal{
+  position:fixed;inset:0;z-index:99998;display:none;
+  align-items:center;justify-content:center;
+}
+#rank-modal.open{display:flex}
+#rank-backdrop{
+  position:absolute;inset:0;background:rgba(4,2,12,.92);
+  backdrop-filter:blur(16px);
+}
+#rank-box{
+  position:relative;z-index:1;
+  width:min(860px,96vw);max-height:92vh;
+  background:linear-gradient(160deg,rgba(16,9,32,.99),rgba(8,4,18,1));
+  border:1px solid rgba(240,192,96,.2);border-radius:22px;
+  overflow:hidden;display:flex;flex-direction:column;
+  box-shadow:0 40px 100px rgba(0,0,0,.85),0 0 80px rgba(155,93,229,.1);
+  animation:rankBoxIn .45s cubic-bezier(.23,1,.32,1) both;
+}
+@keyframes rankBoxIn{from{opacity:0;transform:scale(.92) translateY(20px)}to{opacity:1;transform:none}}
+.rank-header{
+  padding:24px 28px 16px;display:flex;align-items:center;gap:14px;
+  border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0;
+}
+.rank-title{
+  font:900 1.3rem/1 var(--font-display);
+  background:linear-gradient(90deg,#fff 0%,var(--c-gold) 60%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  letter-spacing:.06em;flex:1;
+}
+.rank-close-btn{
+  width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.05);color:rgba(255,255,255,.4);
+  font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background .2s,color .2s;flex-shrink:0;
+}
+.rank-close-btn:hover{background:rgba(255,95,160,.15);color:#fff}
+.rank-gm-icon{
+  width:38px;height:38px;border-radius:50%;overflow:hidden;
+  border:2px solid rgba(240,192,96,.3);cursor:pointer;
+  transition:border-color .2s,box-shadow .2s;flex-shrink:0;background:none;padding:0;
+}
+.rank-gm-icon img{width:100%;height:100%;object-fit:cover;display:block}
+.rank-gm-icon:hover{border-color:var(--c-gold);box-shadow:0 0 14px rgba(240,192,96,.4)}
+.rank-gm-icon.active{border-color:var(--c-gold);box-shadow:0 0 20px rgba(240,192,96,.6)}
+
+.rank-body{overflow-y:auto;flex:1;padding:0 28px 28px;scrollbar-width:thin;scrollbar-color:rgba(240,192,96,.2) transparent}
+
+/* tier legend */
+.tier-legend{display:flex;gap:6px;flex-wrap:wrap;padding:14px 0 10px}
+.tier-pill{font:700 .65rem/1 var(--font-ui);letter-spacing:.08em;padding:4px 12px;border-radius:20px;border:1px solid}
+
+/* board */
+.board-header-row{
+  display:grid;grid-template-columns:44px 1fr 80px 90px;
+  padding:6px 14px;margin-bottom:4px;
+  font:700 .62rem/1 var(--font-ui);letter-spacing:.1em;
+  color:rgba(255,255,255,.3);text-transform:uppercase;
+}
+.rank-row{
+  display:grid;grid-template-columns:44px 1fr 80px 90px;
+  align-items:center;padding:11px 14px;
+  background:rgba(255,255,255,.03);border:1px solid var(--c-border);
+  border-radius:11px;margin-bottom:5px;
+  transition:border-color .2s,background .2s;
+  animation:rowIn .35s ease both;
+}
+.rank-row:hover{background:rgba(255,255,255,.055);border-color:rgba(155,93,229,.3)}
+@keyframes rowIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.rrow-rank{font:900 1rem/1 var(--font-ui);color:rgba(255,255,255,.22);text-align:center}
+.rrow-rank.r1{color:#f0c060;text-shadow:0 0 14px rgba(240,192,96,.7)}
+.rrow-rank.r2{color:#c0c0c0;text-shadow:0 0 10px rgba(200,200,200,.5)}
+.rrow-rank.r3{color:#cd7f32;text-shadow:0 0 10px rgba(205,127,50,.4)}
+.rrow-name{font:600 .88rem/1.3 var(--font-body);padding:0 10px}
+.rrow-score{font:900 1.05rem/1 var(--font-ui);text-align:center;color:#fff}
+.tier-badge{font:700 .63rem/1 var(--font-ui);letter-spacing:.08em;padding:4px 10px;border-radius:14px;border:1px solid;text-align:center;white-space:nowrap}
+.tier-S{color:#ff5fa0;border-color:rgba(255,95,160,.5);background:rgba(255,95,160,.1)}
+.tier-A{color:#f0c060;border-color:rgba(240,192,96,.5);background:rgba(240,192,96,.1)}
+.tier-B{color:#9b5de5;border-color:rgba(155,93,229,.5);background:rgba(155,93,229,.1)}
+.tier-C{color:#5ab4ff;border-color:rgba(90,180,255,.5);background:rgba(90,180,255,.1)}
+.tier-D{color:rgba(255,255,255,.45);border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.04)}
+.rank-empty{text-align:center;padding:48px 20px;color:rgba(255,255,255,.2);font:400 .82rem/1.6 var(--font-ui);letter-spacing:.12em}
+
+/* GM login inside popup */
+#rank-gm-login{display:none;padding:16px 0 8px}
+#rank-gm-login.open{display:block}
+.gm-login-inner{
+  background:rgba(240,192,96,.05);border:1px solid rgba(240,192,96,.18);
+  border-radius:14px;padding:18px 20px;
+}
+.gm-login-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.gm-inp{
+  flex:1;min-width:100px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.12);border-radius:8px;
+  padding:8px 12px;color:#e8e0f8;font:400 .83rem/1 var(--font-body);
+  outline:none;transition:border-color .2s;
+}
+.gm-inp:focus{border-color:rgba(240,192,96,.5)}
+.gm-inp-pass{max-width:140px}
+.gm-submit-btn{
+  padding:8px 16px;border-radius:8px;border:none;
+  background:linear-gradient(135deg,#f0c060,#c8860a);color:#1a0e00;
+  font:700 .72rem/1 var(--font-ui);letter-spacing:.06em;
+  cursor:pointer;white-space:nowrap;flex-shrink:0;
+}
+.gm-err-msg{font:400 .7rem/1 var(--font-body);color:#ff5252;margin-top:4px;min-height:14px}
+
+/* GM control panel */
+#rank-gm-panel{display:none;padding:14px 0 4px}
+#rank-gm-panel.open{display:block}
+.gm-panel-inner{background:rgba(240,192,96,.05);border:1px solid rgba(240,192,96,.18);border-radius:14px;padding:16px 20px}
+.gm-panel-label{font:700 .65rem/1 var(--font-ui);letter-spacing:.1em;color:var(--c-gold);margin-bottom:12px;text-transform:uppercase}
+.gm-add-row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.gm-add-inp{
+  flex:1;min-width:110px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.12);border-radius:8px;
+  padding:7px 11px;color:#e8e0f8;font:400 .83rem/1 var(--font-body);outline:none;transition:border-color .2s;
+}
+.gm-add-inp:focus{border-color:rgba(240,192,96,.5)}
+.gm-add-btn{padding:7px 15px;border-radius:8px;border:none;background:linear-gradient(135deg,#f0c060,#c8860a);color:#1a0e00;font:700 .7rem/1 var(--font-ui);letter-spacing:.05em;cursor:pointer;flex-shrink:0}
+.gm-divider{height:1px;background:rgba(255,255,255,.07);margin:12px 0}
+.gm-acts{display:flex;gap:7px;flex-wrap:wrap}
+.gm-act-btn{padding:6px 14px;border-radius:7px;border:1px solid;font:600 .7rem/1 var(--font-ui);letter-spacing:.05em;cursor:pointer;background:transparent;transition:all .2s}
+.gm-act-danger{color:#ff5252;border-color:rgba(255,82,82,.3)}.gm-act-danger:hover{background:rgba(255,82,82,.12)}
+.gm-act-out{color:rgba(255,255,255,.45);border-color:rgba(255,255,255,.14)}.gm-act-out:hover{background:rgba(255,255,255,.06)}
+
+/* score inline edit */
+.score-edit-inp{width:64px;background:rgba(155,93,229,.15);border:1px solid rgba(155,93,229,.4);border-radius:6px;padding:3px 7px;color:#fff;font:900 .9rem/1 var(--font-ui);text-align:center;outline:none}
+.row-del-btn{width:22px;height:22px;border-radius:5px;border:1px solid rgba(255,82,82,.3);background:transparent;color:#ff5252;font-size:.75rem;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-left:5px;transition:background .2s;vertical-align:middle}
+.row-del-btn:hover{background:rgba(255,82,82,.15)}
+
+@media(max-width:600px){
+  .board-header-row,.rank-row{grid-template-columns:34px 1fr 64px 72px}
+  .rank-header{padding:18px 18px 12px}
+  .rank-body{padding:0 16px 20px}
+}
+</style>
+
+<!-- Rank popup HTML -->
+<div id="rank-modal">
+  <div id="rank-backdrop"></div>
+  <div id="rank-box">
+    <div class="rank-header">
+      <div class="rank-title">🏆 RANK BOARD</div>
+      <button class="rank-gm-icon" id="rank-gm-icon-btn" title="GM Login">
+        <img src="IG/0.png" alt="GM" id="rank-gm-avatar">
+      </button>
+      <button class="rank-close-btn" id="rank-close-btn">✕</button>
+    </div>
+    <div class="rank-body">
+      <!-- tier legend -->
+      <div class="tier-legend">
+        <span class="tier-pill tier-S">S — 80+</span>
+        <span class="tier-pill tier-A">A — 60–79</span>
+        <span class="tier-pill tier-B">B — 40–59</span>
+        <span class="tier-pill tier-C">C — 20–39</span>
+        <span class="tier-pill tier-D">D — 0–19</span>
+      </div>
+
+      <!-- GM login form -->
+      <div id="rank-gm-login">
+        <div class="gm-login-inner">
+          <div class="gm-login-row">
+            <input class="gm-inp" id="gm-u" type="text" placeholder="Username" autocomplete="off">
+            <input class="gm-inp gm-inp-pass" id="gm-p" type="password" placeholder="Password">
+            <button class="gm-submit-btn" id="gm-submit-btn">เข้าระบบ</button>
+          </div>
+          <div class="gm-err-msg" id="gm-err-msg"></div>
+        </div>
+      </div>
+
+      <!-- GM control panel -->
+      <div id="rank-gm-panel">
+        <div class="gm-panel-inner">
+          <div class="gm-panel-label">✦ GM Control Panel</div>
+          <div class="gm-add-row">
+            <input class="gm-add-inp" id="rk-add-name" placeholder="ชื่อผู้เล่น">
+            <input class="gm-add-inp" id="rk-add-score" type="number" placeholder="คะแนน" style="max-width:100px">
+            <button class="gm-add-btn" id="rk-add-btn">+ เพิ่ม</button>
+          </div>
+          <div class="gm-divider"></div>
+          <div class="gm-acts">
+            <button class="gm-act-btn gm-act-danger" id="rk-reset-btn">🗑 Reset ทั้งหมด</button>
+            <button class="gm-act-btn gm-act-out" id="rk-logout-btn">ออกจากระบบ GM</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Board -->
+      <div class="board-header-row">
+        <div>#</div><div style="padding-left:10px">ผู้เล่น</div>
+        <div style="text-align:center">คะแนน</div>
+        <div style="text-align:center">Tier</div>
+      </div>
+      <div id="rank-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════
+   RANK BOARD — inline popup
+════════════════════════════════ */
+;(function(){
+const GM_USER = "Lancelot"
+const GM_PASS = "Valorant1!@3"
+
+let rkPlayers = []
+let rkIsGM    = false
+let rkUnsub   = null
+
+function rkTier(s){
+  if(s>=80)return"S";if(s>=60)return"A";if(s>=40)return"B";if(s>=20)return"C";return"D"
+}
+
+function rkRender(){
+  const list = document.getElementById("rank-list")
+  const sorted = [...rkPlayers].sort((a,b)=>b.score-a.score)
+  if(!sorted.length){
+    list.innerHTML='<div class="rank-empty">✦ ยังไม่มีผู้เล่นในกระดาน ✦</div>';return
+  }
+  list.innerHTML = sorted.map((p,i)=>{
+    const rc = i===0?"r1":i===1?"r2":i===2?"r3":""
+    const med = i===0?"🥇":i===1?"🥈":i===2?"🥉":(i+1)
+    const tier = rkTier(p.score)
+    const origIdx = rkPlayers.indexOf(p)
+    const scoreEl = rkIsGM
+      ? `<input class="score-edit-inp" data-idx="${origIdx}" value="${p.score}" type="number" min="0">`
+      : `<div class="rrow-score">${p.score}</div>`
+    const del = rkIsGM ? `<button class="row-del-btn" data-idx="${origIdx}">✕</button>`:""
+    return`<div class="rank-row" style="animation-delay:${i*.04}s">
+      <div class="rrow-rank ${rc}">${med}</div>
+      <div class="rrow-name">${p.name}${del}</div>
+      <div style="text-align:center">${scoreEl}</div>
+      <div style="text-align:center"><span class="tier-badge tier-${tier}">${tier}</span></div>
+    </div>`
+  }).join("")
+
+  if(rkIsGM){
+    list.querySelectorAll(".score-edit-inp").forEach(el=>{
+      el.addEventListener("change",()=>{
+        rkPlayers[+el.dataset.idx].score = parseInt(el.value)||0
+        rkSave();rkRender();toast("✦ อัปเดตคะแนนแล้ว")
+      })
+    })
+    list.querySelectorAll(".row-del-btn").forEach(el=>{
+      el.addEventListener("click",()=>{
+        rkPlayers.splice(+el.dataset.idx,1);rkSave();rkRender();toast("✦ ลบผู้เล่นแล้ว")
+      })
+    })
+  }
+}
+
+function rkSave(){
+  if(!window._rankRef)return
+  window._setDoc(window._rankRef,{data:JSON.stringify(rkPlayers)})
+    .catch(e=>console.error("rank save fail",e))
+}
+
+/* subscribe realtime when modal opens */
+function rkSubscribe(){
+  if(rkUnsub||!window._onSnapshot||!window._rankRef)return
+  rkUnsub = window._onSnapshot(window._rankRef, snap=>{
+    if(snap.exists()){try{rkPlayers=JSON.parse(snap.data().data)}catch(e){}}
+    rkRender()
+  })
+}
+
+/* open / close */
+window.openRankBoard = function(){
+  document.getElementById("rank-modal").classList.add("open")
+  document.body.style.overflow="hidden"
+  rkSubscribe()
+}
+function closeRankBoard(){
+  document.getElementById("rank-modal").classList.remove("open")
+  if(!document.getElementById("char-modal").classList.contains("open"))
+    document.body.style.overflow=""
+}
+
+document.getElementById("rank-close-btn").addEventListener("click",closeRankBoard)
+document.getElementById("rank-backdrop").addEventListener("click",closeRankBoard)
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&document.getElementById("rank-modal").classList.contains("open"))closeRankBoard()
+})
+
+/* GM icon */
+document.getElementById("rank-gm-icon-btn").addEventListener("click",()=>{
+  if(rkIsGM)return
+  const login = document.getElementById("rank-gm-login")
+  login.classList.toggle("open")
+  if(login.classList.contains("open")) document.getElementById("gm-u").focus()
+})
+
+/* GM login */
+function doGMLogin(){
+  const u=document.getElementById("gm-u").value.trim()
+  const p=document.getElementById("gm-p").value
+  const err=document.getElementById("gm-err-msg")
+  if(u===GM_USER&&p===GM_PASS){
+    rkIsGM=true
+    document.getElementById("rank-gm-login").classList.remove("open")
+    document.getElementById("rank-gm-panel").classList.add("open")
+    document.getElementById("rank-gm-icon-btn").classList.add("active")
+    err.textContent=""
+    rkRender();toast("✦ เข้าสู่ระบบ GM สำเร็จ")
+  } else { err.textContent="ชื่อหรือรหัสผ่านไม่ถูกต้อง" }
+}
+document.getElementById("gm-submit-btn").addEventListener("click",doGMLogin)
+document.getElementById("gm-p").addEventListener("keydown",e=>{if(e.key==="Enter")doGMLogin()})
+
+/* GM controls */
+document.getElementById("rk-add-btn").addEventListener("click",()=>{
+  const name=document.getElementById("rk-add-name").value.trim()
+  const score=parseInt(document.getElementById("rk-add-score").value)||0
+  if(!name)return toast("✦ กรุณาใส่ชื่อผู้เล่น")
+  rkPlayers.push({name,score})
+  document.getElementById("rk-add-name").value=""
+  document.getElementById("rk-add-score").value=""
+  rkSave();rkRender();toast(`✦ เพิ่ม ${name} แล้ว`)
+})
+document.getElementById("rk-reset-btn").addEventListener("click",()=>{
+  if(!confirm("Reset กระดานทั้งหมดใช่ไหม?"))return
+  rkPlayers=[];rkSave();rkRender();toast("✦ Reset กระดานแล้ว")
+})
+document.getElementById("rk-logout-btn").addEventListener("click",()=>{
+  rkIsGM=false
+  document.getElementById("rank-gm-panel").classList.remove("open")
+  document.getElementById("rank-gm-icon-btn").classList.remove("active")
+  rkRender();toast("✦ ออกจากระบบ GM แล้ว")
+})
+
+/* connect onSnapshot after firebase ready */
+document.addEventListener("firebase-ready",()=>{
+  if(!window._onSnapshot) return
+  // patch _onSnapshot from rank firebase module
+})
+
+})()
+</script>
+
 </body>
 </html>
